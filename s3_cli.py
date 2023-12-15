@@ -11,6 +11,7 @@ import logging
 from botocore.exceptions import NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from click import prompt
+from tabulate import tabulate
 
 
 
@@ -32,12 +33,41 @@ logging.basicConfig(level=logging.INFO)
 # Initialize the bucket variable
 bucket = None
 
+def create_bucket():
+    try:
+        # Prompt the user for the bucket name and region
+        bucket_name = click.prompt("Enter the S3 bucket name")
+        region = click.prompt("Enter the region for the bucket (e.g., us-east-1)")
+
+        s3 = session.client('s3', region_name=region)
+        s3.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={'LocationConstraint': region})
+
+        click.echo(f"Bucket {bucket_name} created successfully.")
+        return bucket_name
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+        return None
+    except Exception as e:
+        click.echo(f"An error occurred: {str(e)}")
+        logging.error(f"Error creating bucket: {str(e)}")
+        return None
+
+def list_buckets():
+    try:
+        # List existing buckets
+        s3 = session.client('s3')
+        response = s3.list_buckets()
+        return [bucket['Name'] for bucket in response.get('Buckets', [])]
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+        return []
+    except Exception as e:
+        click.echo(f"An error occurred: {str(e)}")
+        return []
+
 @cli.command()
 def user():
-    """
-    Main function to interact with the S3 CLI.
-    """
-    global bucket  # Declare bucket as a global variable
+    global bucket
 
     click.echo("Welcome to the S3 CLI!")
 
@@ -47,10 +77,31 @@ def user():
 
     click.echo(f"User ID: {user_id} set up successfully.")
 
-    # Prompt the user for the S3 bucket name
-    bucket = click.prompt("Enter the S3 bucket name")
+    # Prompt the user to create a new bucket or use an existing one
+    create_new_bucket = click.confirm("Do you want to create a new bucket?", default=True)
 
-    # ...
+    if create_new_bucket:
+        # Create a new bucket
+        bucket = create_bucket()
+        if not bucket:
+            return
+    else:
+        # Use an existing bucket
+        existing_buckets = list_buckets()
+        if not existing_buckets:
+            click.echo("No existing buckets found.")
+            return
+
+        click.echo("Existing buckets:")
+        for index, existing_bucket in enumerate(existing_buckets, start=1):
+            click.echo(f"{index}. {existing_bucket}")
+
+        selected_bucket_index = click.prompt("Choose a bucket (enter the number)", type=int, show_default=True, default=1)
+        if 1 <= selected_bucket_index <= len(existing_buckets):
+            bucket = existing_buckets[selected_bucket_index - 1]
+        else:
+            click.echo("Invalid selection. Using the first bucket.")
+            bucket = existing_buckets[0]
 
     while True:
         click.echo("\nWhat would you like to do?")
@@ -95,14 +146,26 @@ def view_s3_bucket_logs(bucket_name):
         s3 = boto3.resource('s3')
         bucket = s3.Bucket(bucket_name)
 
-        # Iterate over the bucket's objects and log their key and size
-        for obj in bucket.objects.all():
-            click.echo(obj)
-            click.echo(f"Object: {obj.key}, Size: {obj.size} bytes")
+        # Collect data for the table
+        table_data = []
+
+        # Iterate over the bucket's objects and collect information
+        for index, obj in enumerate(bucket.objects.all(), start=1):
+            size_mb = obj.size / (1024 ** 2)  # Convert size to megabytes
+            timing = obj.last_modified.strftime("%Y-%m-%d %H:%M:%S")  # Format timing as a string
+
+            # Add data to the table with a smaller serial number
+            table_data.append([str(index), obj.key, f"{size_mb:.2f} MB", timing])
+
+        # Display the table
+        headers = ["S.No", "Name", "Size", "Timing of Uploading"]
+        click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
         click.echo(f"S3 bucket activity logs for '{bucket_name}':")
     except Exception as e:
         click.echo(f"Error retrieving S3 bucket activity logs: {str(e)}")
+
+
 import uuid
 
 def create_folder(folder_name, user_bucket, region="eu-north-1"):
@@ -122,6 +185,8 @@ def create_folder(folder_name, user_bucket, region="eu-north-1"):
     except Exception as e:
         click.echo(f"An error occurred: {str(e)}")
         logging.error(f"Error creating folder: {str(e)}")
+
+
 
 # Assuming you have the necessary imports and session setup here...
 
@@ -281,7 +346,7 @@ def delete_files(bucket, files_to_delete):
 
 def list_folder_contents(bucket, region="eu-north-1"):
     """
-    List the contents of an S3 bucket.
+    List the contents of an S3 bucket with serial numbers.
     """
     try:
         # List contents of the bucket
@@ -289,9 +354,17 @@ def list_folder_contents(bucket, region="eu-north-1"):
         response = s3.list_objects_v2(Bucket=bucket)
         contents = response.get('Contents', [])
 
-        click.echo(f"Contents of bucket '{bucket}':")
-        for content in contents:
-            click.echo(content['Key'])
+        # Collect data for the table
+        table_data = []
+
+        # Iterate over the bucket's objects and collect information
+        for index, content in enumerate(contents, start=1):
+            # Add data to the table with a serial number
+            table_data.append([str(index), content['Key']])
+
+        # Display the table
+        headers = ["S.No", "File Name"]
+        click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     except NoCredentialsError:
         click.echo("Credentials not available. Please set up your AWS credentials.")
