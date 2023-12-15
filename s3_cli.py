@@ -12,6 +12,7 @@ from botocore.exceptions import NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from click import prompt
 from tabulate import tabulate
+from boto3.s3.transfer import TransferConfig
 
 
 
@@ -191,15 +192,9 @@ def create_folder(folder_name, user_bucket, region="eu-north-1"):
 # Assuming you have the necessary imports and session setup here...
 
 def calculate_number_of_parts(file_size, part_size):
-    """
-    Calculate the number of parts needed for a multipart upload.
-    """
     return (file_size + part_size - 1) // part_size
 
 def upload_part(args):
-    """
-    Upload a part of the file to S3.
-    """
     part_number, upload_id, file_path, bucket, file_name, part_size = args
     s3 = session.client('s3')
 
@@ -218,9 +213,19 @@ def upload_part(args):
         etag = response["ETag"]
         return {"PartNumber": part_number, "ETag": etag}
 
-def upload_folder(folder_path, bucket, target_part_size=None):
+@click.option("--target-part-size", default=None, type=int, help="Size of each part in bytes")
+@click.option("--num-parts", default=None, type=int, help="Number of parts for each file")
+# ...
+
+def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None):
     """
     Upload files from a folder to S3 with parallel processing.
+
+    Args:
+        folder_path (str): Path to the folder containing files to upload.
+        bucket (str): S3 bucket name.
+        target_part_size (int, optional): Size of each part in bytes. If not provided, user is prompted to enter.
+        num_parts (int, optional): Number of parts for each file. If not provided, user is prompted to enter.
     """
     try:
         # Upload files in the folder
@@ -231,47 +236,39 @@ def upload_folder(folder_path, bucket, target_part_size=None):
         file_paths = [os.path.join(folder_path, file) for file in os.listdir(folder_path) if
                       os.path.isfile(os.path.join(folder_path, file))]
 
-        # Prompt the user for the number of parts only once
-        if target_part_size is None:
+        # Prompt the user for the number of parts and part size
+        if target_part_size is None or num_parts is None:
             total_file_size = sum(os.path.getsize(file) for file in file_paths)
 
             # Calculate the default part size based on file size
-            if total_file_size > 100 * 1024 * 1024:  # Large file
-                target_part_size = 100 * 1024 * 1024  # Set a maximum part size for large files
-            else:  # Small file
-                target_part_size = 5 * 1024 * 1024  # Set a default part size for small files
+            default_part_size = min(max(5 * 1024 * 1024, total_file_size // 100), 100 * 1024 * 1024)
+            click.echo(f"Default part size: {default_part_size} bytes")
 
-            default_num_parts = calculate_number_of_parts(total_file_size, target_part_size)
+            # Prompt the user for part size if not provided
+            target_part_size = click.prompt("Enter part size (in bytes)", default=default_part_size, type=int)
 
-            # Prompt the user for part size
-            target_part_size = click.prompt("Enter part size (in bytes)", default=target_part_size, type=int)
+            # Ensure the part size meets the minimum requirement
+            target_part_size = max(target_part_size, 5 * 1024 * 1024)
 
-            # Check if the user exceeds the maximum part size
-            if target_part_size > 100 * 1024 * 1024:
-                click.echo(f"Warning: Part size cannot exceed 100 MB. Using the default part size.")
-                target_part_size = 100 * 1024 * 1024
-
-            # Check if the user enters a custom part size less than the minimum allowed
-            min_part_size = 5 * 1024 * 1024  # Minimum allowed part size
-            if target_part_size < min_part_size:
-                click.echo(f"Warning: Part size cannot be less than 5 MB. Using the minimum part size.")
-                target_part_size = min_part_size
-
-            # Calculate the number of parts based on the user's input
-            num_parts_prompt = click.prompt(f"Enter the number of parts for all files (default is {default_num_parts})", default=default_num_parts, type=int, show_default=default_num_parts)
+            # Prompt the user for the number of parts if not provided
+            num_parts = click.prompt("Enter the number of parts for all files", default=num_parts, type=int)
 
         for file_path in file_paths:
             file_name = os.path.basename(file_path)
             response = s3.create_multipart_upload(Bucket=bucket, Key=file_name)
             upload_id = response['UploadId']
 
-            # Adjust part size based on file size
+            # Calculate part size based on file size and user input
             file_size = os.path.getsize(file_path)
-            part_size = target_part_size
-            num_parts = min(5, file_size // part_size + 1)
 
-            # Use ThreadPoolExecutor for parallel uploads
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            # Adjust part size based on file size
+            part_size = min(target_part_size, file_size)
+
+            # Calculate the number of parts based on the adjusted part size
+            num_parts = calculate_number_of_parts(file_size, part_size)
+
+            # Use ThreadPoolExecutor for parallel uploads with increased workers
+            with ThreadPoolExecutor(max_workers=10) as executor:
                 args_list = [(part_number, upload_id, file_path, bucket, file_name, part_size)
                              for part_number in range(1, num_parts + 1)]
 
@@ -318,26 +315,37 @@ def upload_folder(folder_path, bucket, target_part_size=None):
     except Exception as e:
         click.echo(f"An error occurred: {str(e)}")
 
-def delete_files(bucket, files_to_delete):
+def delete_files(bucket, paths_to_delete):
     """
-    Delete files from an S3 bucket.
+    Delete files or folders from an S3 bucket.
     """
     try:
-        # Delete files from the bucket
+        # Delete files or folders from the bucket
         s3 = session.client('s3')
         deleted_files = []
 
-        for file_name in files_to_delete:
+        for path_to_delete in paths_to_delete:
             try:
-                s3.delete_object(Bucket=bucket, Key=file_name)
-                deleted_files.append(file_name)
-                click.echo(f"{file_name} deleted successfully.")
-            except Exception as e:
-                click.echo(f"An error occurred while deleting {file_name}: {str(e)}")
+                if path_to_delete.endswith('/'):
+                    # If the path ends with '/', treat it as a folder and delete all objects inside
+                    objects_to_delete = s3.list_objects_v2(Bucket=bucket, Prefix=path_to_delete)
+                    objects = objects_to_delete.get('Contents', [])
 
-        click.echo("Files deleted successfully:")
-        for deleted_file in deleted_files:
-            click.echo(deleted_file)
+                    for obj in objects:
+                        s3.delete_object(Bucket=bucket, Key=obj['Key'])
+                        deleted_files.append(obj['Key'])
+                        click.echo(f"{obj['Key']} deleted successfully.")
+                else:
+                    # If the path doesn't end with '/', treat it as a single file and delete it
+                    s3.delete_object(Bucket=bucket, Key=path_to_delete)
+                    deleted_files.append(path_to_delete)
+                    click.echo(f"{path_to_delete} deleted successfully.")
+            except Exception as e:
+                click.echo(f"An error occurred while deleting {path_to_delete}: {str(e)}")
+
+        click.echo("Files or folders deleted successfully:")
+        for deleted_item in deleted_files:
+            click.echo(deleted_item)
 
     except NoCredentialsError:
         click.echo("Credentials not available. Please set up your AWS credentials.")
