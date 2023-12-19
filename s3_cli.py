@@ -6,7 +6,7 @@ import math
 import datetime
 import uuid
 import logging
-
+import hashlib
 
 from botocore.exceptions import NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -112,7 +112,8 @@ def user():
         click.echo("4. Delete files in S3")
         click.echo("5. Download a file from S3")
         click.echo("6. View S3 bucket activity logs")
-        click.echo("7. Exit")
+        click.echo("7. Switch S3 Bucket")
+        click.echo("8. Exit")
 
         choice = click.prompt("Enter your choice")
 
@@ -137,9 +138,27 @@ def user():
         elif choice == "6":
             view_s3_bucket_logs(bucket)
         elif choice == "7":
+            # Allow the user to switch to a different bucket
+            existing_buckets = list_buckets()
+            if not existing_buckets:
+                click.echo("No existing buckets found.")
+                continue
+
+            click.echo("Existing buckets:")
+            for index, existing_bucket in enumerate(existing_buckets, start=1):
+                click.echo(f"{index}. {existing_bucket}")
+
+            selected_bucket_index = click.prompt("Choose a bucket (enter the number)", type=int, show_default=True, default=1)
+            if 1 <= selected_bucket_index <= len(existing_buckets):
+                bucket = existing_buckets[selected_bucket_index - 1]
+                click.echo(f"Switched to bucket: {bucket}")
+            else:
+                click.echo("Invalid selection. Using the current bucket.")
+        elif choice == "8":
             break
         else:
             click.echo("Invalid choice. Please try again.")
+
 
 def view_s3_bucket_logs(bucket_name):
     try:
@@ -492,6 +511,24 @@ def help():
     click.echo("--help\t\tTo get access of all commands")
     # Add more general options if needed
     click.echo("For more information, run 'python your_script.py --help'")
+
+
+def calculate_file_hash(file_path, block_size=65536):
+    sha256 = hashlib.sha256()
+    with open(file_path, 'rb') as file:
+        for block in iter(lambda: file.read(block_size), b''):
+            sha256.update(block)
+    return sha256.hexdigest()
+
+# Example usage:
+file_path = r"C:\Users\naman-axcess\Desktop\multipart upload\s3_cli.py"
+
+try:
+    hash_value = calculate_file_hash(file_path)
+    print(f"SHA-256 hash of {file_path}: {hash_value}")
+except Exception as e:
+    print(f"Error calculating hash: {e}")
+
 
 if __name__ == '__main__':
     cli()
