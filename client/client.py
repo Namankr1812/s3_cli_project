@@ -137,7 +137,7 @@ def user():
             logging.info(f"Listed contents of S3 bucket {bucket}")
         elif choice == "4":
             files_to_delete = click.prompt("Enter the file names to delete (separated by space)").split()
-            multi_part_delete.delete_files(bucket, files_to_delete)
+            multi_part_delete.delete_files_interactive(bucket, files_to_delete)
             logging.info(f"Deleted files {files_to_delete} from S3 bucket {bucket}")
         elif choice == "5":
             multi_part_download.download_from_s3(bucket)
