@@ -19,6 +19,27 @@ session = boto3.Session()
 s3 = session.resource('s3')
 
 
+import click
+import boto3
+import os
+import time
+import math
+import datetime
+import uuid
+import logging
+import hashlib
+import sys
+
+from botocore.exceptions import NoCredentialsError
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from click import prompt
+from tabulate import tabulate
+from boto3.s3.transfer import TransferConfig
+
+session = boto3.Session()
+s3 = session.resource('s3')
+
+
 def list_folder_contents(bucket, region="eu-north-1"):
     """
     List the contents of an S3 bucket with serial numbers.
