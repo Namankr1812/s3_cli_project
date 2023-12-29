@@ -6,8 +6,6 @@ from test_newcreation_folder import create_folder
 
 class TestCreateFolderFunction(unittest.TestCase):
 
-
-
     @patch('builtins.input', side_effect=['test_bucket', 'test_folder'])
     @patch('test_newcreation_folder.session.client', side_effect=NoCredentialsError())
     def test_create_folder_no_credentials(self, mock_client, mock_input):
