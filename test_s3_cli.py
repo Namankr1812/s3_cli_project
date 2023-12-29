@@ -1,5 +1,3 @@
-# test_s3_cli.py
-
 import os
 import tempfile
 import shutil
@@ -14,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from test_s3_cli_folder import create_folder, upload_folder, list_folder_contents, delete_files_interactive
 from click.testing import CliRunner
 from test_s3_cli_folder import executor
+from tabulate import tabulate
 import botocore
 
 s3_client = boto3.client('s3')
@@ -21,7 +20,6 @@ s3_client = boto3.client('s3')
 @click.group()
 def upload_command():
     pass
-
 
 class CaptureCalls:
     def __init__(self, obj, method_name):
@@ -57,7 +55,7 @@ def temp_folder():
         print(f"Error deleting temporary folder {temp_dir}: {e}")
 
 def test_create_folder():
-    folder_name = "new10_folder1"
+    folder_name = "note1_folder1"
     user_bucket = "irisbucket"
     s3_folder_path = f"{folder_name}-{user_bucket}/"
 
@@ -136,7 +134,6 @@ def test_upload_folder(mock_s3_resource):
         for file_path in dummy_file_paths:
             os.remove(file_path)
 
-
 @click.command(name='delete-files-interactive')
 def delete_files_interactive(bucket, file_path):
     user_bucket = "irisbucket"
@@ -149,7 +146,6 @@ def delete_files_interactive(bucket, file_path):
 
     assert result.exit_code == 0
     assert f"Deleted file {s3_file_path}" in result.output
-
 
 def view_s3_bucket_logs(bucket_name):
     try:
@@ -175,3 +171,33 @@ def view_s3_bucket_logs(bucket_name):
         click.echo(f"S3 bucket activity logs for '{bucket_name}':")
     except Exception as e:
         click.echo(f"Error retrieving S3 bucket activity logs: {str(e)}")
+
+def print_test_summary():
+    # Read the HTML report file
+    with open("report.html", "r", encoding="utf-8") as file:
+        html_content = file.read()
+
+    # Parse the HTML content using BeautifulSoup
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    # Extract the test results
+    test_results = []
+    for index, row in enumerate(soup.select("#results-table tbody tr"), start=1):
+        cells = [index] + [cell.text.strip() for cell in row.select("td")]
+        test_results.append(cells)
+
+    # Display the test results in a tabular format
+    headers = ["Serial No", "Test Name", "Status", "Duration"]
+    print(tabulate(test_results, headers=headers, tablefmt="grid"))
+
+if __name__ == "__main__":
+    # Run pytest and print the test summary
+    result_code = pytest.main(["-qq", "--html=report.html", "--self-contained-html"])
+
+    # Print the test summary
+    print_test_summary()
+
+    # Exit with the pytest result code
+    exit(result_code)
