@@ -18,6 +18,63 @@ from boto3.s3.transfer import TransferConfig
 session = boto3.Session()
 s3 = session.resource('s3')
 
+def enable_encryption_at_rest(bucket_name):
+    try:
+        s3 = session.client('s3')
+        s3.put_bucket_encryption(
+            Bucket=bucket_name,
+            ServerSideEncryptionConfiguration={
+                'Rules': [
+                    {
+                        'ApplyServerSideEncryptionByDefault': {
+                            'SSEAlgorithm': 'AES256'
+                        }
+                    }
+                ]
+            }
+        )
+        click.echo(f"Encryption at rest enabled for {bucket_name}.")
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+    except Exception as e:
+        click.echo(f"Error enabling encryption at rest: {str(e)}")
+
+def enable_encryption_in_transit(bucket_name):
+    try:
+        s3 = session.client('s3')
+        s3.put_bucket_policy(
+            Bucket=bucket_name,
+            Policy='''{
+                "Version": "2012-10-17",
+                "Id": "PutObjPolicy",
+                "Statement": [
+                    {
+                        "Effect": "Deny",
+                        "Principal": "*",
+                        "Action": "s3:*",
+                        "Resource": [
+                            "arn:aws:s3:::%s/*"
+                        ],
+                        "Condition": {
+                            "Bool": {
+                                "aws:SecureTransport": "false"
+                            }
+                        }
+                    }
+                ]
+            }''' % bucket_name
+        )
+        click.echo(f"Encryption in transit enabled for {bucket_name}.")
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+    except Exception as e:
+        click.echo(f"Error enabling encryption in transit: {str(e)}")
+
+def enable_encryption(bucket_name):
+    click.echo(f"Enabling encryption for {bucket_name}...")
+    enable_encryption_at_rest(bucket_name)
+    enable_encryption_in_transit(bucket_name)
+
 
 
 def download_file(bucket, file_name, local_directory):
@@ -45,7 +102,18 @@ def download_from_s3(bucket):
     Download files from S3 to the local storage.
     """
     try:
+        enable_encryption(bucket)
+
         s3 = session.client('s3')
+
+        # Print encryption status
+        encryption_at_rest = s3.get_bucket_encryption(Bucket=bucket).get('ServerSideEncryptionConfiguration', None)
+        encryption_in_transit = s3.get_bucket_policy(Bucket=bucket)['Policy']
+
+        click.echo(f"Encryption at rest: {'enabled' if encryption_at_rest else 'disabled'}")
+        click.echo(f"Encryption in transit: {'enabled' if 'aws:SecureTransport' in encryption_in_transit else 'disabled'}")
+
+        # Continue with the download
         bucket_contents = s3.list_objects_v2(Bucket=bucket).get('Contents', [])
 
         if not bucket_contents:

@@ -8,12 +8,12 @@ import uuid
 import logging
 import hashlib
 import sys
-
-from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import NoCredentialsError, ParamValidationError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from click import prompt
 from tabulate import tabulate
 from boto3.s3.transfer import TransferConfig
+
 
 from dev import multi_part_upload
 from dev import multi_part_delete
@@ -28,6 +28,70 @@ session = boto3.Session()
 @click.group()
 def cli():
     pass
+
+#----------------------------------------------------ENCRYPTION FUNCTIONS----------------------------------------------------
+
+def enable_encryption_at_rest(bucket_name):
+    try:
+        s3 = session.client('s3')
+        s3.put_bucket_encryption(
+            Bucket=bucket_name,
+            ServerSideEncryptionConfiguration={
+                'Rules': [
+                    {
+                        'ApplyServerSideEncryptionByDefault': {
+                            'SSEAlgorithm': 'AES256'
+                        }
+                    }
+                ]
+            }
+        )
+        click.echo(f"Encryption at rest enabled for {bucket_name}.")
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+    except ParamValidationError as e:
+        click.echo(f"Error enabling encryption at rest: {str(e)}")
+        logging.error(f"Error enabling encryption at rest: {str(e)}")
+
+def enable_encryption_in_transit(bucket_name):
+    try:
+        s3 = session.client('s3')
+        s3.put_bucket_policy(
+            Bucket=bucket_name,
+            Policy=f'''{{
+                "Version": "2012-10-17",
+                "Id": "PutObjPolicy",
+                "Statement": [
+                    {{
+                        "Effect": "Deny",
+                        "Principal": "*",
+                        "Action": "s3:*",
+                        "Resource": [
+                            "arn:aws:s3:::{bucket_name}/*"
+                        ],
+                        "Condition": {{
+                            "Bool": {{
+                                "aws:SecureTransport": "false"
+                            }}
+                        }}
+                    }}
+                ]
+            }}'''
+        )
+        click.echo(f"Encryption in transit enabled for {bucket_name}.")
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+    except ParamValidationError as e:
+        click.echo(f"Error enabling encryption in transit: {str(e)}")
+        logging.error(f"Error enabling encryption in transit: {str(e)}")
+
+@cli.command()
+@click.argument("bucket_name")
+def enable_encryption(bucket_name):
+    """Enable encryption at rest and in transit for an S3 bucket."""
+    click.echo(f"Enabling encryption for {bucket_name}...")
+    enable_encryption_at_rest(bucket_name)
+    enable_encryption_in_transit(bucket_name)
 
 #------------------------------------------------------------user------------------------------------------------------------
 
@@ -93,6 +157,9 @@ def user():
         bucket = create_bucket()
         if not bucket:
             return
+        # Enable encryption at rest and in transit
+        enable_encryption_at_rest(bucket)
+        enable_encryption_in_transit(bucket)
     else:
         # Use an existing bucket
         existing_buckets = list_buckets()
@@ -110,6 +177,12 @@ def user():
         else:
             click.echo("Invalid selection. Using the first bucket.")
             bucket = existing_buckets[0]
+
+        # Enable encryption at rest and in transit for the selected existing bucket
+        enable_encryption_at_rest(bucket)
+        enable_encryption_in_transit(bucket)
+
+    click.echo(f"Using bucket: {bucket}")
 
     while True:
         click.echo("\nWhat would you like to do?")
@@ -244,7 +317,7 @@ def calculate_file_hash(file_path, block_size=65536):
     return sha256.hexdigest()
 
 # Example usage:
-file_path = r"C:\Users\naman-axcess\Desktop\multipart_upload\client\client.py"
+file_path = r"D:\multipart_upload\client\client.py"
 
 try:
     hash_value = calculate_file_hash(file_path)

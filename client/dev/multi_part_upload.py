@@ -1,5 +1,3 @@
-
-
 import click
 import boto3
 import os
@@ -20,14 +18,12 @@ from boto3.s3.transfer import TransferConfig
 session = boto3.Session()
 s3 = session.resource('s3')
 
-
-
 # Assuming you have the necessary imports and session setup here...
 
 def calculate_number_of_parts(file_size, part_size):
     return (file_size + part_size - 1) // part_size
 
-def upload_part(args):
+def upload_part(args, encryption_key=None):
     part_number, upload_id, file_path, bucket, file_name, part_size = args
     s3 = session.client('s3')
 
@@ -35,22 +31,36 @@ def upload_part(args):
         file.seek(part_size * (part_number - 1))
         data = file.read(part_size)
 
-        response = s3.upload_part(
-            Body=data,
-            Bucket=bucket,
-            Key=file_name,
-            UploadId=upload_id,
-            PartNumber=part_number
-        )
+        if encryption_key:
+            # Encrypt the data before uploading
+            # Example: Use AWS KMS for server-side encryption
+            response = s3.upload_part(
+                Body=data,
+                Bucket=bucket,
+                Key=file_name,
+                UploadId=upload_id,
+                PartNumber=part_number,
+                SSEKMSKeyId=encryption_key,
+            )
+        else:
+            # Upload without encryption
+            response = s3.upload_part(
+                Body=data,
+                Bucket=bucket,
+                Key=file_name,
+                UploadId=upload_id,
+                PartNumber=part_number,
+            )
 
         etag = response["ETag"]
         return {"PartNumber": part_number, "ETag": etag}
 
 @click.option("--target-part-size", default=None, type=int, help="Size of each part in bytes")
 @click.option("--num-parts", default=None, type=int, help="Number of parts for each file")
+@click.option("--encryption-key", default=None, help="AWS KMS Key ID for server-side encryption")
 # ...
 
-def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None):
+def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None, encryption_key=None):
     try:
         # Upload files in the folder
         s3 = boto3.client('s3')
@@ -97,7 +107,7 @@ def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None):
                              for part_number in range(1, num_parts + 1)]
 
                 # Upload parts in parallel
-                parts = list(executor.map(upload_part, args_list))
+                parts = list(executor.map(lambda args: upload_part(args, encryption_key), args_list))
 
             # Check for errors in parts
             errors = [part for part in parts if 'Error' in part]

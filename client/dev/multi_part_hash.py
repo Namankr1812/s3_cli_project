@@ -23,7 +23,7 @@ def calculate_file_hash(file_path, block_size=65536):
     return sha256.hexdigest()
 
 # Example usage:
-file_path = r"C:\Users\naman-axcess\Desktop\multipart_upload\client\client.py"
+file_path = r"D:\multipart_upload\client\client.py"
 
 try:
     hash_value = calculate_file_hash(file_path)
