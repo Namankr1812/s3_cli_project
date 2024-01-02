@@ -55,7 +55,7 @@ def temp_folder():
         print(f"Error deleting temporary folder {temp_dir}: {e}")
 
 def test_create_folder():
-    folder_name = "note1_folder1"
+    folder_name = "note5_folder4"
     user_bucket = "irisbucket"
     s3_folder_path = f"{folder_name}-{user_bucket}/"
 
@@ -172,6 +172,15 @@ def view_s3_bucket_logs(bucket_name):
     except Exception as e:
         click.echo(f"Error retrieving S3 bucket activity logs: {str(e)}")
 
+def get_api_info(test_name):
+    # Implement your logic to obtain API information based on the test name
+    if "upload" in test_name:
+        return "upload_api_v1"
+    elif "delete" in test_name:
+        return "delete_api_v2"
+    else:
+        return "unknown_api"
+
 def print_test_summary():
     # Read the HTML report file
     with open("report.html", "r", encoding="utf-8") as file:
@@ -186,11 +195,17 @@ def print_test_summary():
     test_results = []
     for index, row in enumerate(soup.select("#results-table tbody tr"), start=1):
         cells = [index] + [cell.text.strip() for cell in row.select("td")]
+
+        # You can add your API information here based on the test name or any other criteria
+        api_info = get_api_info(cells[1])  # Replace this with your logic
+
+        cells.insert(4, api_info)  # Add the API information as the 4th column
         test_results.append(cells)
 
     # Display the test results in a tabular format
-    headers = ["Serial No", "Test Name", "Status", "Duration"]
+    headers = ["Serial No", "Test Name", "Status", "Duration", "APIs"]
     print(tabulate(test_results, headers=headers, tablefmt="grid"))
+
 
 if __name__ == "__main__":
     # Run pytest and print the test summary
