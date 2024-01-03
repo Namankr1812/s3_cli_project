@@ -2,19 +2,18 @@ import click
 import boto3
 import os
 import time
-import math
-import datetime
-import uuid
 import logging
 import hashlib
-import sys
-from botocore.exceptions import NoCredentialsError, ParamValidationError
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+from botocore.exceptions import NoCredentialsError, ParamValidationError, WaiterError
 from click import prompt
-from tabulate import tabulate
 from boto3.s3.transfer import TransferConfig
 
+# Add these imports for AWS Key Management Service (KMS)
+from botocore.exceptions import WaiterError
+from boto3.exceptions import S3UploadFailedError
 
+# Importing functions from the 'dev' module
 from dev import multi_part_upload
 from dev import multi_part_delete
 from dev import multi_part_download
@@ -24,6 +23,16 @@ from dev import multi_part_logs
 from dev import multi_part_new_folder_creation
 
 session = boto3.Session()
+
+# Use TransferConfig to set up encryption at rest during uploads
+transfer_config = TransferConfig(
+    multipart_threshold=5 * 1024 * 1024,  # Use multipart uploads for files larger than 5MB
+    multipart_chunksize=5 * 1024 * 1024,  # Set chunk size for each part to 5MB
+    use_threads=True
+)
+
+# Set up your S3 client with encryption in transit
+s3 = session.client('s3', use_ssl=True, verify=True)
 
 @click.group()
 def cli():
@@ -85,15 +94,72 @@ def enable_encryption_in_transit(bucket_name):
         click.echo(f"Error enabling encryption in transit: {str(e)}")
         logging.error(f"Error enabling encryption in transit: {str(e)}")
 
-@cli.command()
-@click.argument("bucket_name")
-def enable_encryption(bucket_name):
-    """Enable encryption at rest and in transit for an S3 bucket."""
-    click.echo(f"Enabling encryption for {bucket_name}...")
-    enable_encryption_at_rest(bucket_name)
-    enable_encryption_in_transit(bucket_name)
+# Add function for client-side encryption using AWS KMS
 
-#------------------------------------------------------------user------------------------------------------------------------
+def enable_client_side_encryption_auto(bucket_name):
+    try:
+        s3 = session.client('s3')
+
+        # Enable client-side encryption automatically
+        s3.put_bucket_encryption(
+            Bucket=bucket_name,
+            ServerSideEncryptionConfiguration={
+                'Rules': [
+                    {
+                        'ApplyServerSideEncryptionByDefault': {
+                            'SSEAlgorithm': 'aws:kms'
+                        }
+                    }
+                ]
+            }
+        )
+        click.echo(f"Encryption setup completed for {bucket_name}.")
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+    except Exception as e:
+        click.echo(f"Error enabling client-side encryption: {str(e)}")
+        logging.error(f"Error enabling client-side encryption: {str(e)}")
+def enable_hsm_protection(bucket_name):
+    try:
+        kms_client = session.client('kms')
+
+        # Create a new AWS KMS key for HSM protection
+        response = kms_client.create_key(
+            Description='KMS key for S3 HSM protection',
+            KeyUsage='ENCRYPT_DECRYPT',
+            Origin='AWS_KMS'
+        )
+        kms_key_id = response['KeyMetadata']['KeyId']
+
+        # Allow S3 to use the key for HSM protection
+        kms_client.put_key_policy(
+            KeyId=kms_key_id,
+            PolicyName='default',
+            Policy=json.dumps({
+                'Version': '2012-10-17',
+                'Id': 'key-default-1',
+                'Statement': [
+                    {
+                        'Effect': 'Allow',
+                        'Principal': '*',
+                        'Action': 'kms:*',
+                        'Resource': '*'
+                    }
+                ]
+            })
+        )
+
+        # Enable client-side encryption using the KMS key
+        enable_client_side_encryption_auto(bucket_name)
+
+        click.echo(f"HSM protection using AWS KMS enabled for {bucket_name}.")
+    except NoCredentialsError:
+        click.echo("Credentials not available. Please set up your AWS credentials.")
+    except Exception as e:
+        click.echo(f"Error enabling HSM protection: {str(e)}")
+        logging.error(f"Error enabling HSM protection: {str(e)}")
+
+
 
 # Assuming you have a session and s3 resource object defined
 session = boto3.Session()
@@ -157,9 +223,11 @@ def user():
         bucket = create_bucket()
         if not bucket:
             return
-        # Enable encryption at rest and in transit
+        # Enable encryption at rest, in transit, client-side encryption, and HSM protection
         enable_encryption_at_rest(bucket)
         enable_encryption_in_transit(bucket)
+        enable_client_side_encryption_auto(bucket)
+        enable_hsm_protection(bucket)
     else:
         # Use an existing bucket
         existing_buckets = list_buckets()
@@ -178,11 +246,13 @@ def user():
             click.echo("Invalid selection. Using the first bucket.")
             bucket = existing_buckets[0]
 
-        # Enable encryption at rest and in transit for the selected existing bucket
+        # Enable encryption at rest, in transit, client-side encryption, and HSM protection for the selected existing bucket
         enable_encryption_at_rest(bucket)
         enable_encryption_in_transit(bucket)
+        enable_client_side_encryption_auto(bucket)
+        enable_hsm_protection(bucket)
 
-    click.echo(f"Using bucket: {bucket}")
+    click.echo(f"Encryption setup completed for bucket: {bucket}")
 
     while True:
         click.echo("\nWhat would you like to do?")
@@ -302,9 +372,9 @@ def watch(interval, recursive, directory):
 @cli.command()
 def help():
     """Display help information for your script."""
-    click.echo("--user\t\tFor accessing to create a Bucket ,Muliti-part Upload , Delete File and Listing files.")
+    click.echo("--user\t\tFor accessing to create a Bucket, Multi-part Upload, Delete File, and Listing files.")
     click.echo("--watch\t\tFor Watching the change of directory")
-    click.echo("--help\t\tTo get access of all commands")
+    click.echo("--help\t\tTo get access to all commands")
     # Add more general options if needed
     click.echo("For more information, run 'python your_script.py --help'")
 

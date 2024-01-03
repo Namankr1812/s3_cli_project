@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from click import prompt
 from tabulate import tabulate
 from boto3.s3.transfer import TransferConfig
-
+from cryptography.fernet import Fernet
 session = boto3.Session()
 s3 = session.resource('s3')
 
@@ -77,7 +77,12 @@ def enable_encryption(bucket_name):
 
 
 
-def download_file(bucket, file_name, local_directory):
+def decrypt_data(data, decryption_key):
+    cipher = Fernet(decryption_key)
+    decrypted_data = cipher.decrypt(data)
+    return decrypted_data
+
+def download_file(bucket, file_name, local_directory, decryption_key=None):
     """
     Download a file from S3 to the local storage.
     """
@@ -88,13 +93,29 @@ def download_file(bucket, file_name, local_directory):
         os.makedirs(local_directory, exist_ok=True)
 
         local_path = os.path.join(local_directory, file_name)
+
+        # Download the file from S3
         s3.download_file(bucket, file_name, local_path)
+
+        # Check if the file is encrypted (using server-side encryption)
+        encryption_info = s3.head_object(Bucket=bucket, Key=file_name).get('ServerSideEncryption', None)
+
+        if encryption_info and decryption_key:
+            # Decrypt the downloaded file
+            with open(local_path, 'rb') as file:
+                encrypted_data = file.read()
+                decrypted_data = decrypt_data(encrypted_data, decryption_key)
+
+            # Write the decrypted data back to the local file
+            with open(local_path, 'wb') as file:
+                file.write(decrypted_data)
 
         click.echo(f"{file_name} downloaded to {local_path} successfully.")
     except NoCredentialsError:
         click.echo("Credentials not available. Please set up your AWS credentials.")
     except Exception as e:
         click.echo(f"An error occurred: {str(e)}")
+
 
 
 def download_from_s3(bucket):

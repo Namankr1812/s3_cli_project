@@ -8,62 +8,99 @@ import uuid
 import logging
 import hashlib
 import sys
-
+import cryptography
 from botocore.exceptions import NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from click import prompt
 from tabulate import tabulate
 from boto3.s3.transfer import TransferConfig
+from cryptography.fernet import Fernet
 
 session = boto3.Session()
 s3 = session.resource('s3')
 
-# Assuming you have the necessary imports and session setup here...
+def get_s3_endpoint(bucket_name):
+    try:
+        client = boto3.client('s3')
+        location = client.get_bucket_location(Bucket=bucket_name)['LocationConstraint']
+        return f'https://s3.{location}.amazonaws.com'
+    except Exception as e:
+        print(f"Error getting S3 endpoint: {e}")
+        return 'https://s3.amazonaws.com'  # Default to global S3 endpoint
 
 def calculate_number_of_parts(file_size, part_size):
     return (file_size + part_size - 1) // part_size
 
-def upload_part(args, encryption_key=None):
+def encrypt_data(data, encryption_key):
+    cipher = Fernet(encryption_key)
+    encrypted_data = cipher.encrypt(data)
+    return encrypted_data
+
+def decrypt_data(data, encryption_key):
+    cipher = Fernet(encryption_key)
+    decrypted_data = cipher.decrypt(data)
+    return decrypted_data
+
+def upload_part(args, encryption_key=None, bucket_region='us-east-1'):
     part_number, upload_id, file_path, bucket, file_name, part_size = args
-    s3 = session.client('s3')
+    s3_endpoint = get_s3_endpoint(bucket)
 
     with open(file_path, 'rb') as file:
         file.seek(part_size * (part_number - 1))
         data = file.read(part_size)
 
+        # Check if client-side encryption is enabled
         if encryption_key:
-            # Encrypt the data before uploading
-            # Example: Use AWS KMS for server-side encryption
-            response = s3.upload_part(
-                Body=data,
-                Bucket=bucket,
-                Key=file_name,
-                UploadId=upload_id,
-                PartNumber=part_number,
-                SSEKMSKeyId=encryption_key,
-            )
-        else:
-            # Upload without encryption
-            response = s3.upload_part(
-                Body=data,
-                Bucket=bucket,
-                Key=file_name,
-                UploadId=upload_id,
-                PartNumber=part_number,
-            )
+            data = encrypt_data(data, encryption_key)
 
-        etag = response["ETag"]
-        return {"PartNumber": part_number, "ETag": etag}
+        # Specify the server-side encryption algorithm
+        s3 = boto3.client('s3', endpoint_url=s3_endpoint, region_name=bucket_region)
+        sse_algorithm = 'AES256'  # Use 'AES256' for Amazon S3 managed keys
+
+        # Assuming encryption_key is the client-side encryption key
+        sse_customer_key = encryption_key.encode('utf-8').hex() if encryption_key else None
+
+        # Use SSECustomerKey only if it's not None
+        s3_upload_args = {
+            'Bucket': bucket,
+            'Key': file_name,
+            'UploadId': upload_id,
+            'PartNumber': part_number,
+        }
+        headers = {
+            'x-amz-server-side-encryption-customer-algorithm': sse_algorithm,
+            'x-amz-server-side-encryption-customer-key': sse_customer_key,
+        }
+        if sse_customer_key:
+            s3_upload_args['Headers'] = headers
+
+        try:
+            response = s3.upload_part(Body=data, **s3_upload_args)
+        except Exception as e:
+            click.echo(f"An error occurred: {str(e)}")
+            return  # Exit the function if an error occurs
+
+    etag = response["ETag"]
+    return {"PartNumber": part_number, "ETag": etag}
+
+
 
 @click.option("--target-part-size", default=None, type=int, help="Size of each part in bytes")
 @click.option("--num-parts", default=None, type=int, help="Number of parts for each file")
-@click.option("--encryption-key", default=None, help="AWS KMS Key ID for server-side encryption")
+@click.option("--encryption-key", default=None, help="Encryption key for client-side encryption/decryption")
 # ...
 
 def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None, encryption_key=None):
     try:
+        # Get S3 bucket region
+        s3_bucket = boto3.resource('s3').Bucket(bucket)
+        bucket_region = s3_bucket.meta.client.meta.region_name
+
+        # Use the correct S3 endpoint for the specified region
+        s3_endpoint = get_s3_endpoint(bucket)
+
         # Upload files in the folder
-        s3 = boto3.client('s3')
+        s3 = boto3.client('s3', endpoint_url=s3_endpoint, region_name=bucket_region)
         parts_total = []
 
         # Get a list of all files in the folder
@@ -107,7 +144,7 @@ def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None, en
                              for part_number in range(1, num_parts + 1)]
 
                 # Upload parts in parallel
-                parts = list(executor.map(lambda args: upload_part(args, encryption_key), args_list))
+                parts = list(executor.map(lambda args: upload_part(args, encryption_key, bucket_region), args_list))
 
             # Check for errors in parts
             errors = [part for part in parts if 'Error' in part]
@@ -148,3 +185,5 @@ def upload_folder(folder_path, bucket, target_part_size=None, num_parts=None, en
         click.echo("Credentials not available. Please provide valid AWS access key and secret access key.")
     except Exception as e:
         click.echo(f"An error occurred: {str(e)}")
+
+
