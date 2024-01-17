@@ -1,3 +1,8 @@
+"""Overview
+The S3 CLI is a comprehensive command-line interface designed to interact with Amazon 
+Simple Storage Service (S3) buckets. This documentation provides a detailed explanation of 
+each section of the code, highlighting key functionalities, AWS interactions, and error 
+handling."""
 import click
 import boto3
 import os
@@ -8,7 +13,17 @@ import json
 from botocore.exceptions import NoCredentialsError, ParamValidationError, WaiterError
 from click import prompt
 from boto3.s3.transfer import TransferConfig
-
+"""
+1.click: This module provides a framework for building command-line interfaces (CLIs) in Python. It simplifies the process of creating complex command-line applications with features like argument parsing, prompting, and more.
+2.boto3: This is the Amazon Web Services (AWS) SDK for Python. It allows Python developers to write software that uses services like Amazon S3 and Amazon EC2. In this script, boto3 is used to interact with AWS services, particularly Amazon S3.
+3.os: The os module provides a way to interact with the operating system, allowing your script to perform tasks like file and directory manipulation.
+4.time: The time module provides various time-related functions. In this script, it might be used for introducing delays or measuring execution time.
+5.logging: The logging module provides a flexible way to configure different loggers and handlers for logging messages at different severity levels. It's used for generating log messages in this script.
+6.hashlib: This module provides a common interface to various secure hash and message digest algorithms. In this script, it's used to calculate the SHA-256 hash of files.
+7.json: The json module provides methods for working with JSON data. In this script, it might be used for handling JSON-formatted data.
+8.botocore.exceptions: This module contains exception classes specific to the botocore library, the underlying library used by boto3 for handling AWS API requests.
+9.click.prompt: This is a function from the click module that is used to prompt the user for input. It simplifies the process of getting user input in a CLI application.
+10.boto3.s3.transfer.TransferConfig: This class provides configuration settings for S3 transfers, such as multipart uploads. It allows you to configure parameters like multipart threshold and chunk size."""
 # Add these imports for AWS Key Management Service (KMS)
 from botocore.exceptions import WaiterError
 from boto3.exceptions import S3UploadFailedError
@@ -24,13 +39,27 @@ from dev import multi_part_new_folder_creation
 
 session = boto3.Session()
 
+#-------------------------------------------------------------------------------------------------
+"""The TransferConfig object is used to configure how files are uploaded to Amazon S3. 
+It specifies that:
+1.For files larger than 5MB, use multipart uploads (splitting into smaller parts).
+2.Each part of the upload should be 5MB in size.
+3.Enable concurrent uploading using multiple threads for faster transfers."""
 # Use TransferConfig to set up encryption at rest during uploads
 transfer_config = TransferConfig(
     multipart_threshold=5 * 1024 * 1024,  # Use multipart uploads for files larger than 5MB
     multipart_chunksize=5 * 1024 * 1024,  # Set chunk size for each part to 5MB
     use_threads=True
 )
+#--------------------------------------------------------------------------------------------------
+"""
+This code establishes an Amazon S3 client (s3) using the boto3 library within the AWS SDK for Python (Boto3). 
+The session.client('s3', use_ssl=True, verify=True) call creates an S3 client object configured with SSL (Secure Sockets Layer) 
+for secure communication (use_ssl=True) and verification of SSL/TLS certificates (verify=True).
 
+The @click.group() decorator is defining a command group for a command-line interface (CLI) using the click library. 
+In this case, it sets up a group named cli, which will contain multiple subcommands and options. 
+This is a common pattern for organizing and structuring command-line applications."""
 # Set up your S3 client with encryption in transit
 s3 = session.client('s3', use_ssl=True, verify=True)
 
