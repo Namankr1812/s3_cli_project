@@ -45,7 +45,7 @@ export AWS_DEFAULT_REGION=your_region
 
 ## 3. Usage 
 
-### 3.1 User Setup <a name="user-setup"></a>
+### 3.1 User 
 
 Prompt the user to set up an ID and password:
 
@@ -63,7 +63,7 @@ bucket = create_bucket()
 Explanation:
     The user is prompted to create a new S3 bucket, and the create_bucket function is called.
 
-###3.2.2 List Existing Buckets
+### 3.2.2 List Existing Buckets
 ```python
 existing_buckets = list_buckets()
 ```
@@ -78,7 +78,7 @@ Explanation:
      The user is prompted to switch to a different bucket, and the selected bucket becomes the active bucket.
 
 ## 3.3 File Operations <a name="file-operations"></a>
-###3.3.1 Create a New Folder
+### 3.3.1 Create a New Folder
 
 ```python
 folder_name = click.prompt("Enter the folder name")
