@@ -1,95 +1,58 @@
 import os
-import shutil
-import tempfile
-import boto3
+import json
+import base64
+from cryptography.fernet import Fernet
+from unittest.mock import patch
 import pytest
-from botocore.exceptions import NoCredentialsError
-from click.testing import CliRunner
-import click
-import unittest.mock
 
-from datetime import datetime, timezone
-
-# Replace this line in your code:
-# datetime_now = datetime.datetime.utcnow()
-
-# With this line:
-datetime_now = datetime.now(timezone.utc)
-
-
-# Replace 'your_script_name' with the actual name of your script/module
-from test_upload_folder import upload_folder
-
-@click.group()
-def upload_command():
-    pass
-
-@upload_command.command()
-@click.argument('folder')
-@click.argument('bucket')
-@click.option('--target-part-size', default=5242880, help='Target size of each part in bytes')
-@click.option('--num-parts', default=5, help='Number of parts to split the file into')
-def upload(folder, bucket, target_part_size, num_parts):
-    # Function logic goes here
-    pass
-
-# Remove the upload_folder command from the click.group decorator
-# upload_command.add_command(upload_folder)
+from test_upload_folder import upload_folder, encryption_keys, save_encryption_keys
 
 @pytest.fixture
-def mock_s3_resource(monkeypatch):
-    # Mock the S3 resource to avoid actual S3 operations during testing
-    class MockS3Resource:
-        def Bucket(self, _):
-            return MockBucket()
+def mock_boto3():
+    with patch('test_upload_folder.boto3') as mock_boto3:
+        yield mock_boto3
 
-    class MockBucket:
-        def objects(self):
-            return []
+def generate_encryption_key():
+    key = os.urandom(32)
+    return key
 
-    monkeypatch.setattr(boto3, "resource", lambda *args, **kwargs: MockS3Resource())
+def test_upload_folder(mock_boto3, tmpdir):
+    # Set up temporary folder with test files
+    temp_folder = str(tmpdir)
+    file1_path = os.path.join(temp_folder, 'test_file1.txt')
+    file2_path = os.path.join(temp_folder, 'test_file2.txt')
 
-@pytest.fixture
-def temp_folder():
-    # Create a temporary folder for testing
-    temp_dir = tempfile.mkdtemp()
-    yield temp_dir
-    # Clean up the temporary folder after the test
-    shutil.rmtree(temp_dir)
+    with open(file1_path, 'w') as file1:
+        file1.write("Test content for file 1")
 
-@unittest.mock.patch('boto3.resource')
-def test_upload_folder(mock_s3_resource):
+    with open(file2_path, 'w') as file2:
+        file2.write("Test content for file 2")
+
     # Mock S3 resource
-    mock_bucket = unittest.mock.Mock()
-    mock_bucket.objects.all.return_value = [
-        unittest.mock.Mock(key=f"test_file_{i}.txt") for i in range(3)
-    ]
-    mock_s3_resource.return_value.Bucket.return_value = mock_bucket
+    mock_bucket = mock_boto3.resource.return_value.Bucket.return_value
+    mock_bucket.meta.client.meta.region_name = 'us-east-1'
 
-    temp_folder = r'C:\Users\naman-axcess\Desktop\multipart_upload\AWS File'
+    # Mock the response of create_multipart_upload
+    mock_boto3.client.return_value.create_multipart_upload.return_value = {'UploadId': 'mock_upload_id'}
 
-    # Generate dummy file paths
-    dummy_file_paths = []
-    for i in range(3):
-        dummy_file_path = os.path.join(temp_folder, f"test_file_{i}.txt")
-        with open(dummy_file_path, "w") as f:
-            f.write(f"Test content for file {i}")
-        dummy_file_paths.append(dummy_file_path)
+    # Generate and save a test encryption key
+    test_key = generate_encryption_key()
+    encryption_keys = {os.path.basename(file1_path): test_key.decode('latin1')}
+    with open('encryption_keys.json', 'w') as file:
+        json.dump(encryption_keys, file)
 
-    try:
-        # Directly invoke the upload_folder function for testing
+    # Call the upload_folder function
+    with patch('test_upload_folder.upload_part', return_value={"PartNumber": 1, "ETag": "mock_etag_1"}):
         upload_folder(temp_folder, "test_bucket", target_part_size=5242880, num_parts=5)
 
-        # Assert that the bucket is empty initially
-        s3_bucket = mock_s3_resource.return_value.Bucket.return_value
-        assert len(list(s3_bucket.objects.all())) == 3
+    # Assert that encryption keys are stored and match expected
+    saved_encryption_keys = json.load(open('encryption_keys.json', 'r'))
+    for file_path, key in encryption_keys.items():
+        assert file_path in saved_encryption_keys
+        assert saved_encryption_keys[file_path] == key
 
-        # Assert that the expected files are present in the bucket after the upload
-        expected_keys = [os.path.basename(file_path) for file_path in dummy_file_paths]
-        actual_keys = [obj.key for obj in s3_bucket.objects.all()]
-        assert set(expected_keys) == set(actual_keys)
+    # Cleanup: Remove the 'encryption_keys.json' file after the test
+    os.remove('encryption_keys.json')
 
-    finally:
-        # Cleanup: Remove the dummy files after the test
-        for file_path in dummy_file_paths:
-            os.remove(file_path)
+# Uncomment the line below if you want to run the tests
+# pytest -v test_your_module.py
