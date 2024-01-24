@@ -10,7 +10,7 @@ import time
 import logging
 import hashlib
 import json
-from botocore.exceptions import NoCredentialsError, ParamValidationError, WaiterError
+from botocore.exceptions import NoCredentialsError, ParamValidationError
 from click import prompt
 from boto3.s3.transfer import TransferConfig
 # Add these imports for AWS Key Management Service (KMS)
@@ -132,6 +132,7 @@ def enable_client_side_encryption_auto(bucket_name):
     except Exception as e:
         click.echo(f"Error enabling client-side encryption: {str(e)}")
         logging.error(f"Error enabling client-side encryption: {str(e)}")
+
 def enable_hsm_protection(bucket_name):
     try:
         kms_client = session.client('kms')
@@ -171,8 +172,6 @@ def enable_hsm_protection(bucket_name):
     except Exception as e:
         click.echo(f"Error enabling HSM protection: {str(e)}")
         logging.error(f"Error enabling HSM protection: {str(e)}")
-
-
 
 # Assuming you have a session and s3 resource object defined
 session = boto3.Session()
@@ -220,29 +219,33 @@ def list_buckets():
 def user():
     global bucket
 
-    click.echo("Welcome to the S3 CLI!")
+    click.echo("Welcome to the S3 Multi-Part CLI!")
 
-    # Prompt the user to set up an ID and password
     user_id = click.prompt("Enter your user ID")
     password = click.prompt("Enter your password", hide_input=True, confirmation_prompt=True)
 
     click.echo(f"User ID: {user_id} set up successfully.")
 
-    # Prompt the user to create a new bucket or use an existing one
     create_new_bucket = click.confirm("Do you want to create a new bucket?", default=True)
 
     if create_new_bucket:
-        # Create a new bucket
         bucket = create_bucket()
         if not bucket:
             return
-        # Enable encryption at rest, in transit, client-side encryption, and HSM protection
+
         enable_encryption_at_rest(bucket)
         enable_encryption_in_transit(bucket)
-        enable_client_side_encryption_auto(bucket)
-        enable_hsm_protection(bucket)
+        
+        # Prompt to enable HSM protection
+        enable_hsm = click.confirm("Do you want to enable HSM protection?", default=False)
+        if enable_hsm:
+            enable_hsm_protection(bucket)
+        
+        # Prompt to enable client-side encryption
+        enable_kms = click.confirm("Do you want to enable client-side encryption using KMS?", default=False)
+        if enable_kms:
+            enable_client_side_encryption_auto(bucket)
     else:
-        # Use an existing bucket
         existing_buckets = list_buckets()
         if not existing_buckets:
             click.echo("No existing buckets found.")
@@ -259,11 +262,18 @@ def user():
             click.echo("Invalid selection. Using the first bucket.")
             bucket = existing_buckets[0]
 
-        # Enable encryption at rest, in transit, client-side encryption, and HSM protection for the selected existing bucket
         enable_encryption_at_rest(bucket)
         enable_encryption_in_transit(bucket)
-        enable_client_side_encryption_auto(bucket)
-        enable_hsm_protection(bucket)
+        
+        # Prompt to enable HSM protection
+        enable_hsm = click.confirm("Do you want to enable HSM protection?", default=False)
+        if enable_hsm:
+            enable_hsm_protection(bucket)
+        
+        # Prompt to enable client-side encryption
+        enable_kms = click.confirm("Do you want to enable client-side encryption using KMS?", default=False)
+        if enable_kms:
+            enable_client_side_encryption_auto(bucket)
 
     click.echo(f"Encryption setup completed for bucket: {bucket}")
 
